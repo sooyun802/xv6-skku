@@ -176,6 +176,10 @@ UPROGS=\
 	_wc\
 	_zombie\
 	_halt\
+	_getnice\
+	_setnice\
+	_ps\
+	_test\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
@@ -186,7 +190,7 @@ clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
 	initcode initcode.out kernel xv6.img fs.img kernelmemfs mkfs \
-	.gdbinit TAGS \
+	.gdbinit \
 	$(UPROGS)
 
 # make a printout
@@ -237,9 +241,9 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
 	$(QEMU) -nographic $(QEMUOPTS) -S $(QEMUGDB)
 
 # SKKU operating system
-PROJECTNUM=2-2
+PROJECTNUM=2
 # enter your ID
-STUDENTID=2011311671
+STUDENTID=2015318646
 
 # DO NOT EDIT
 tarball:

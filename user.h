@@ -24,6 +24,10 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int halt(void) __attribute__((noreturn));
+void yield(void);
+int getnice(int);
+int setnice(int, int);
+void ps(int);
 
 // ulib.c
 int stat(char*, struct stat*);

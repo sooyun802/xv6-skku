@@ -20,6 +20,123 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+struct node {
+  struct proc *p;
+  struct node *next;
+};
+
+struct node nodelist[NPROC];
+struct node queue[41];
+
+void
+queueinit(void)
+{
+  int i;
+
+  for(i = 0; i < NPROC; i++){
+    nodelist[i].p = 0;
+  }
+  for(i = 0; i < 41; i++){
+    queue[i].p = 0;
+    queue[i].next = 0;
+  }
+}
+
+void
+printqueue(void)
+{
+  int i;
+  struct node *n;
+
+  for(i = 0; i < 41; i++){
+    n = &queue[i];
+    cprintf("%d: ", i);
+    while(n->next != 0){
+      cprintf("pid = %d | ", n->next->p->pid);
+      n = n->next;
+    }
+    if(i % 5 == 0)
+      cprintf("\n");
+  }
+}
+
+void
+addqueue(struct proc *p)
+{
+  int i;
+  struct node *n;
+  n = &queue[p->nice];
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == 0){
+      nodelist[i].p = p;
+      nodelist[i].next = 0;
+      break;
+    }
+  }
+  while(n->next != 0){
+    n = n->next;
+  }
+  n->next = &nodelist[i];
+}
+
+void
+deletequeue(struct proc *p)
+{
+  int i, find = 0;
+  struct node *n, *before;
+  n = &queue[p->nice];
+  before = n;
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == p)
+      find = 1;
+  }
+  if(find == 0)
+    return;
+
+  while(n->next != 0){
+    if(n->p == p)
+      break;
+    before = n;
+    n = n->next;
+  }
+  before->next = n->next;
+  n->p = 0;
+  n->next = 0;
+}
+
+void
+changepriority(struct proc *p, int value)
+{
+  int i, find = 0;
+  struct node *n, *before;
+  n = &queue[p->nice];
+  before = n;
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == p)
+      find = 1;
+  }
+  if(find == 0)
+    return;
+
+  while(n->next != 0){
+    if(n->p == p)
+      break;
+    before = n;
+    n = n->next;
+  }
+  before->next = n->next;
+
+  before = &queue[value];
+  while(before->next != 0){
+    before = before->next;
+  }
+  before->next = n;
+  n->next = 0;
+}
+
 void
 pinit(void)
 {
@@ -49,6 +166,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->nice = 20;
 
   release(&ptable.lock);
 
@@ -103,6 +221,8 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  queueinit();
+
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -110,6 +230,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  addqueue(p);
 
   release(&ptable.lock);
 }
@@ -157,6 +278,7 @@ fork(void)
   }
   np->sz = proc->sz;
   np->parent = proc;
+  np->nice = np->parent->nice;
   *np->tf = *proc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -174,6 +296,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  addqueue(np);
 
   release(&ptable.lock);
 
@@ -221,6 +344,7 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   proc->state = ZOMBIE;
+  deletequeue(proc);
   sched();
   panic("zombie exit");
 }
@@ -280,6 +404,8 @@ void
 scheduler(void)
 {
   struct proc *p;
+  int i;
+  struct node *n;
 
   for(;;){
     // Enable interrupts on this processor.
@@ -287,22 +413,27 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
+    for(i = 0; i < 41; i++){
+      n = &queue[i];
+      if(n->next == 0)
         continue;
 
+      p = n->next->p;
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       proc = p;
       switchuvm(p);
       p->state = RUNNING;
+      deletequeue(p);
       swtch(&cpu->scheduler, p->context);
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       proc = 0;
+
+      break;
     }
     release(&ptable.lock);
 
@@ -340,6 +471,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   proc->state = RUNNABLE;
+  addqueue(proc);
   sched();
   release(&ptable.lock);
 }
@@ -390,6 +522,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   proc->chan = chan;
   proc->state = SLEEPING;
+  deletequeue(proc);
   sched();
 
   // Tidy up.
@@ -409,10 +542,14 @@ static void
 wakeup1(void *chan)
 {
   struct proc *p;
+  //struct node *n;
+  //int i;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+      addqueue(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -437,8 +574,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
         p->state = RUNNABLE;
+        addqueue(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -481,5 +620,74 @@ procdump(void)
         cprintf(" %p", pc[i]);
     }
     cprintf("\n");
+  }
+}
+
+int
+getnice(int pid)
+{
+  struct proc *p;
+
+  if(pid < 1) return -1;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      return p->nice;
+    }
+  }
+  return -1;
+}
+
+int
+setnice(int pid, int value)
+{
+  struct proc *p;
+  int originalNice;
+
+  if(value < 0 || value > 40 || pid < 1)
+    return -1;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      originalNice = p->nice;
+      if(originalNice != value)
+        changepriority(p, value);
+      p->nice = value;
+      if(originalNice != value){
+        proc->state = RUNNABLE;
+        addqueue(proc);
+        sched();
+      }
+      release(&ptable.lock);
+      return 0;
+    }
+  }
+  release(&ptable.lock);
+  return -1;
+}
+
+void
+ps(int pid)
+{
+  static char *states[] = {
+  [UNUSED]    "unused",
+  [EMBRYO]    "embryo",
+  [SLEEPING]  "sleep ",
+  [RUNNABLE]  "runble",
+  [RUNNING]   "run   ",
+  [ZOMBIE]    "zombie"
+  };
+  struct proc *p;
+  char *state;
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED)
+      continue;
+    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    if(p->pid == pid || pid == 0) {
+      cprintf("%d %d %s %s\n", p->pid, p->nice, state, p->name);
+    }
   }
 }
