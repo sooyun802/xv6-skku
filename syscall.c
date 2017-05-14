@@ -100,6 +100,10 @@ extern int sys_write(void);
 extern int sys_uptime(void);
 extern int sys_halt(void);
 extern int sys_yield(void);
+extern int sys_getnice(void);
+extern int sys_setnice(void);
+extern int sys_ps(void);
+extern int sys_test(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -125,6 +129,10 @@ static int (*syscalls[])(void) = {
 [SYS_close]   sys_close,
 [SYS_halt]    sys_halt,
 [SYS_yield]   sys_yield,
+[SYS_getnice] sys_getnice,
+[SYS_setnice] sys_setnice,
+[SYS_ps]      sys_ps,
+[SYS_test]    sys_test,
 };
 
 void
