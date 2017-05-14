@@ -40,7 +40,7 @@ allocproc(void)
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == UNUSED)
+    if(p->state == UNUSED) //some state is empty??
       goto found;
 
   release(&ptable.lock);
@@ -48,8 +48,9 @@ allocproc(void)
 
 found:
   p->state = EMBRYO;
-  p->pid = nextpid++;
-
+  p->pid = nextpid++; //assigning of pid??
+  p->nice = 20;
+    //add code here??
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -157,6 +158,7 @@ fork(void)
   }
   np->sz = proc->sz;
   np->parent = proc;
+  np->nice = np->parent->nice; //here???
   *np->tf = *proc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -173,6 +175,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  //np->nice = np->parent->nice;
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -445,6 +448,66 @@ kill(int pid)
   }
   release(&ptable.lock);
   return -1;
+}
+
+int
+getnice(int pid)
+{
+  struct proc *p;
+
+  if(pid < 1) return -1;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      return p->nice;
+    }
+  }
+  return -1;
+}
+
+int
+setnice(int pid, int value)
+{
+  struct proc *p;
+
+  if(value < 0 || value > 40 || pid < 1)
+    return -1;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      p->nice = value;
+      release(&ptable.lock);
+      return 0;
+    }
+  }
+  release(&ptable.lock);
+  return -1;
+}
+
+void
+ps(int pid)
+{
+  static char *states[] = {
+  [UNUSED]    "unused",
+  [EMBRYO]    "embryo",
+  [SLEEPING]  "sleep ",
+  [RUNNABLE]  "runble",
+  [RUNNING]   "run   ",
+  [ZOMBIE]    "zombie"
+  };
+  struct proc *p;
+  char *state;
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED)
+      continue;
+    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    if(p->pid == pid || pid == 0) {
+      cprintf("%d %d %s %s\n", p->pid, p->nice, state, p->name);
+    }
+  }
 }
 
 //PAGEBREAK: 36
