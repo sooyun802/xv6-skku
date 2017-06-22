@@ -11,7 +11,6 @@
 
 void freerange(void *vstart, void *vend);
 extern char end[]; // first address after kernel loaded from ELF file
-int numfreepages=0;
 
 struct run {
   struct run *next;
@@ -21,7 +20,6 @@ struct {
   struct spinlock lock;
   int use_lock;
   struct run *freelist;
-  uint refcnt[PHYSTOP>>PGSHIFT];
 } kmem;
 
 // Initialization happens in two phases.
@@ -49,10 +47,8 @@ freerange(void *vstart, void *vend)
 {
   char *p;
   p = (char*)PGROUNDUP((uint)vstart);
-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE){
-    kmem.refcnt[V2P(p)>>PGSHIFT] = 0;
+  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
     kfree(p);
-  }
 }
 
 //PAGEBREAK: 21
@@ -69,22 +65,13 @@ kfree(char *v)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
-  // memset(v, 1, PGSIZE);
+  memset(v, 1, PGSIZE);
 
   if(kmem.use_lock)
     acquire(&kmem.lock);
-  // numfreepages++;
   r = (struct run*)v;
-  // r->next = kmem.freelist;
-  // kmem.freelist = r;
-  if(kmem.refcnt[V2P(v)>>PGSHIFT] > 0)
-    kmem.refcnt[V2P(v)>>PGSHIFT]--;
-  if(kmem.refcnt[V2P(v)>>PGSHIFT] == 0){
-    memset(v, 1, PGSIZE);
-    numfreepages++;
-    r->next = kmem.freelist;
-    kmem.freelist = r;
-  }
+  r->next = kmem.freelist;
+  kmem.freelist = r;
   if(kmem.use_lock)
     release(&kmem.lock);
 }
@@ -99,51 +86,11 @@ kalloc(void)
 
   if(kmem.use_lock)
     acquire(&kmem.lock);
-  // numfreepages--;
   r = kmem.freelist;
-  // if(r)
-  //   kmem.freelist = r->next;
-  if(r){
+  if(r)
     kmem.freelist = r->next;
-    numfreepages--;
-    kmem.refcnt[V2P((char*)r)>>PGSHIFT] = 1;
-  }
   if(kmem.use_lock)
     release(&kmem.lock);
   return (char*)r;
 }
 
-int freemem(){
-  return numfreepages;
-}
-
-void incrementRefcnt(uint pa){
-  if(pa < (uint)V2P(end) || pa >= PHYSTOP)
-    panic("incrementRefcnt");
-
-  acquire(&kmem.lock);
-  kmem.refcnt[pa>>PGSHIFT]++;
-  release(&kmem.lock);
-}
-
-void decrementRefcnt(uint pa){
-  if(pa < (uint)V2P(end) || pa >= PHYSTOP)
-    panic("decrementRefcnt");
-
-  acquire(&kmem.lock);
-  kmem.refcnt[pa>>PGSHIFT]--;
-  release(&kmem.lock);
-}
-
-uint getRefcnt(uint pa){
-  if(pa < (uint)V2P(end) || pa >= PHYSTOP)
-    panic("getRefcnt");
-
-  uint refCnt;
-
-  acquire(&kmem.lock);
-  refCnt = kmem.refcnt[pa>>PGSHIFT];
-  release(&kmem.lock);
-
-  return refCnt;
-}

@@ -7,18 +7,135 @@
 #include "proc.h"
 #include "spinlock.h"
 
-struct {
+struct _ptable {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
 
-static struct proc *initproc;
+struct proc *initproc;
 
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
-static void wakeup1(void *chan);
+void wakeup1(void *chan);
+
+struct node {
+  struct proc *p;
+  struct node *next;
+};
+
+struct node nodelist[NPROC];
+struct node queue[41];
+
+void
+queueinit(void)
+{
+  int i;
+
+  for(i = 0; i < NPROC; i++){
+    nodelist[i].p = 0;
+  }
+  for(i = 0; i < 41; i++){
+    queue[i].p = 0;
+    queue[i].next = 0;
+  }
+}
+
+void
+addqueue(struct proc *p)
+{
+  int i;
+  struct node *n;
+  n = &queue[p->nice];
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == 0){
+      nodelist[i].p = p;
+      nodelist[i].next = 0;
+      break;
+    }
+  }
+  while(n->next != 0){
+    n = n->next;
+  }
+  n->next = &nodelist[i];
+}
+
+void
+deletequeue(struct proc *p)
+{
+  int i, find = 0;
+  struct node *n, *before;
+  n = &queue[p->nice];
+  before = n;
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == p)
+      find = 1;
+  }
+  if(find == 0)
+    return;
+
+  while(n->next != 0){
+    if(n->p == p)
+      break;
+    before = n;
+    n = n->next;
+  }
+  before->next = n->next;
+  n->p = 0;
+  n->next = 0;
+}
+
+void
+printqueue(void)
+{
+  int i;
+  struct node *n;
+
+  for(i = 0; i < 41; i++){
+    n = &queue[i];
+    cprintf("%d: ", i);
+    while(n->next != 0){
+      cprintf("pid = %d | ", n->next->p->pid);
+      n = n->next;
+    }
+    if(i % 5 == 0)
+      cprintf("\n");
+  }
+}
+
+void
+changepriority(struct proc *p, int value)
+{
+  int i, find = 0;
+  struct node *n, *before;
+  n = &queue[p->nice];
+  before = n;
+
+  for(i = 0; i < NPROC; i++){
+    if(nodelist[i].p == p)
+      find = 1;
+  }
+  if(find == 0)
+    return;
+
+  while(n->next != 0){
+    if(n->p == p)
+      break;
+    before = n;
+    n = n->next;
+  }
+  before->next = n->next;
+
+  before = &queue[value];
+  while(before->next != 0){
+    before = before->next;
+  }
+  before->next = n;
+  n->next = 0;
+}
 
 void
 pinit(void)
@@ -49,6 +166,8 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->nice = 20;
+  p->tid = p->pid;
 
   release(&ptable.lock);
 
@@ -72,6 +191,10 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+
+  sp -= sizeof(int);
+  p->tcnt = (int*)sp;
+  *p->tcnt = 1;
 
   return p;
 }
@@ -103,6 +226,8 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  queueinit();
+
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -110,6 +235,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  addqueue(p);
 
   release(&ptable.lock);
 }
@@ -158,6 +284,7 @@ fork(void)
   np->sz = proc->sz;
   np->parent = proc;
   *np->tf = *proc->tf;
+  np->nice = np->parent->nice;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -174,6 +301,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  addqueue(np);
 
   release(&ptable.lock);
 
@@ -187,7 +315,7 @@ void
 exit(void)
 {
   struct proc *p;
-  int fd;
+  int fd, i;
 
   if(proc == initproc)
     panic("init exiting");
@@ -208,7 +336,36 @@ exit(void)
   acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
-  wakeup1(proc->parent);
+  // wakeup1(proc->parent);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == proc->pid || p == proc->parent)
+      wakeup1(proc->parent);
+  }
+
+  if(*proc->tcnt != 1){
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(*proc->tcnt == 1)
+        break;
+      if(p->pid != proc->pid)
+        continue;
+      if(p->state == RUNNABLE || p->state == ZOMBIE){
+        kfree(p->kstack);
+        p->kstack = 0;
+        p->pid = 0;
+        p->tid = 0;
+        p->nice = -1;
+        (*p->tcnt)--;
+        // p->tcnt = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        deletequeue(p);
+        for(i = 0; i < NOFILE; i++)
+          p->ofile[i] = 0;
+      }
+    }
+  }
 
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
@@ -221,6 +378,7 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   proc->state = ZOMBIE;
+  deletequeue(proc);
   sched();
   panic("zombie exit");
 }
@@ -248,6 +406,8 @@ wait(void)
         p->kstack = 0;
         freevm(p->pgdir);
         p->pid = 0;
+        p->tid = 0;
+        p->nice = -1;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
@@ -276,7 +436,7 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void
+/*void
 scheduler(void)
 {
   struct proc *p;
@@ -303,6 +463,45 @@ scheduler(void)
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       proc = 0;
+    }
+    release(&ptable.lock);
+
+  }
+}*/
+void
+scheduler(void)
+{
+  struct proc *p;
+  int i;
+  struct node *n;
+
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    for(i = 0; i < 41; i++){
+      n = &queue[i];
+      if(n->next == 0)
+        continue;
+
+      p = n->next->p;
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      deletequeue(p);
+      swtch(&cpu->scheduler, p->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      proc = 0;
+
+      break;
     }
     release(&ptable.lock);
 
@@ -340,6 +539,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   proc->state = RUNNABLE;
+  addqueue(proc);
   sched();
   release(&ptable.lock);
 }
@@ -390,6 +590,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   proc->chan = chan;
   proc->state = SLEEPING;
+  deletequeue(proc);
   sched();
 
   // Tidy up.
@@ -405,14 +606,16 @@ sleep(void *chan, struct spinlock *lk)
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
 // The ptable lock must be held.
-static void
+void
 wakeup1(void *chan)
 {
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+      addqueue(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -437,8 +640,10 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
         p->state = RUNNABLE;
+        addqueue(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -482,4 +687,8 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+int getpid(void){
+	return proc->pid;
 }

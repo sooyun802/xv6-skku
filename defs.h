@@ -68,10 +68,6 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
-int freemem(void);
-void     		incrementRefcnt(uint pa);
-void      		decrementRefcnt(uint pa);
-uint      		getRefcnt(uint pa);
 
 // kbd.c
 void            kbdintr(void);
@@ -119,7 +115,17 @@ void            sleep(void*, struct spinlock*);
 void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
+void			wakeup1(void *chan);
 void            yield(void);
+void			deletequeue(struct proc *p);
+void			addqueue(struct proc *p);
+int getpid(void);
+
+// thread.c
+int thread_create(void *(*)(void *), int, void *, void *);
+void thread_exit(void *);
+int thread_join(int, void **);
+int gettid(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -181,7 +187,6 @@ void            freevm(pde_t*);
 void            inituvm(pde_t*, char*, uint);
 int             loaduvm(pde_t*, char*, struct inode*, uint, uint);
 pde_t*          copyuvm(pde_t*, uint);
-void      		pgfault_handler(void);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
