@@ -9,6 +9,8 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct mutex_t;
+struct cond_t;
 
 // bio.c
 void            binit(void);
@@ -114,8 +116,8 @@ void            sched(void);
 void            sleep(void*, struct spinlock*);
 void            userinit(void);
 int             wait(void);
-void            wakeup(void*);
 void			wakeup1(void *chan);
+void            wakeup(void*);
 void            yield(void);
 void			deletequeue(struct proc *p);
 void			addqueue(struct proc *p);
@@ -126,6 +128,14 @@ int thread_create(void *(*)(void *), int, void *, void *);
 void thread_exit(void *);
 int thread_join(int, void **);
 int gettid(void);
+
+// synch.S
+int mutex_init(struct mutex_t *);
+int mutex_lock(struct mutex_t *);
+int mutex_unlock(struct mutex_t *);
+int cond_init(struct cond_t *);
+int cond_wait(struct cond_t *, struct mutex_t *);
+int cond_signal(struct cond_t *);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

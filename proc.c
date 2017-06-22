@@ -690,5 +690,5 @@ procdump(void)
 }
 
 int getpid(void){
-	return proc->pid;
+  return proc->pid;
 }
